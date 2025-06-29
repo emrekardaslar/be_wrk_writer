@@ -93,6 +93,14 @@ namespace be_wrk_writer
 
             try
             {
+                string completionKey = $"writer:completed:{command.CorrelationId}";
+                if (await _redisDatabase.KeyExistsAsync(completionKey))
+                {
+                    _logger.LogInformation($"be_wrk_writer: [!] Write operation for CorrelationId: {command.CorrelationId} already completed. Skipping.");
+                    _rabbitMqService.Ack(context.DeliveryTag);
+                    return;
+                }
+
                 // Fetch the list of IDs from the orchestration state in Redis
                 var stateJson = await _redisDatabase.StringGetAsync(command.CorrelationId.ToString());
                 if (stateJson.IsNullOrEmpty)
@@ -126,6 +134,9 @@ namespace be_wrk_writer
 
                 response.IsSuccess = true;
                 response.PersistedItemId = newId;
+
+                // Record completion in Redis
+                await _redisDatabase.StringSetAsync(completionKey, newId, TimeSpan.FromMinutes(30));
             }
             catch (Exception ex)
             {
