@@ -2,6 +2,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
+using StackExchange.Redis;
 
 // --- USING DIRECTIVES ---
 using be_wrk_writer; // To find WriterWorker
@@ -28,6 +29,10 @@ namespace be_wrk_writer
                 {
                     // Register our custom RabbitMQ service
                     services.AddRabbitMqService();
+
+                    // --- Add Redis Connection --- //
+                    services.AddSingleton<IConnectionMultiplexer>(sp => 
+                        ConnectionMultiplexer.Connect(hostContext.Configuration.GetConnectionString("Redis")));
 
                     // Register our WriterWorker as a hosted service
                     services.AddHostedService<WriterWorker>();

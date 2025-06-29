@@ -5,6 +5,7 @@ using System;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using StackExchange.Redis;
 
 // --- USING DIRECTIVES FOR core_lib_messaging ---
 using core_lib_messaging.Models;
@@ -16,13 +17,19 @@ namespace be_wrk_writer
 {
     public class WriterWorker : BackgroundService
     {
+        private class OrchestrationState
+        {
+            public List<string> Ids { get; set; } = new List<string>();
+        }
         private readonly ILogger<WriterWorker> _logger;
         private readonly IRabbitMqService _rabbitMqService;
+        private readonly IDatabase _redisDatabase;
 
-        public WriterWorker(ILogger<WriterWorker> logger, IRabbitMqService rabbitMqService)
+        public WriterWorker(ILogger<WriterWorker> logger, IRabbitMqService rabbitMqService, IConnectionMultiplexer redisConnection)
         {
             _logger = logger;
             _rabbitMqService = rabbitMqService;
+            _redisDatabase = redisConnection.GetDatabase();
         }
 
         public override Task StartAsync(CancellationToken cancellationToken)
@@ -72,11 +79,11 @@ namespace be_wrk_writer
         {
             WriterResponse response = new WriterResponse { CorrelationId = command.CorrelationId };
 
-            if (command == null || string.IsNullOrEmpty(command.DataToPersist))
+            if (command == null)
             {
-                _logger.LogWarning("be_wrk_writer: [!] Error: Received null or empty WriterCommand. Nacking.");
+                _logger.LogWarning("be_wrk_writer: [!] Error: Received null WriterCommand. Nacking.");
                 response.IsSuccess = false;
-                response.ErrorMessage = "Received null or empty data to persist.";
+                response.ErrorMessage = "Received null command.";
                 _rabbitMqService.Nack(context.DeliveryTag, requeue: false);
                 await _rabbitMqService.PublishAsync(RabbitMqConfig.ResWriterQueue, response); // Publish error response
                 return;
@@ -86,6 +93,25 @@ namespace be_wrk_writer
 
             try
             {
+                // Fetch the list of IDs from the orchestration state in Redis
+                var stateJson = await _redisDatabase.StringGetAsync(command.CorrelationId.ToString());
+                if (stateJson.IsNullOrEmpty)
+                {
+                    throw new InvalidOperationException($"Could not find orchestration state for CorrelationId: {command.CorrelationId}");
+                }
+                var state = JsonSerializer.Deserialize<OrchestrationState>(stateJson);
+
+                // Fetch the actual data for each ID from Redis
+                var dataToPersist = new List<string>();
+                foreach (var id in state.Ids)
+                {
+                    var data = await _redisDatabase.StringGetAsync(id);
+                    if (!data.IsNullOrEmpty)
+                    {
+                        dataToPersist.Add(data);
+                    }
+                }
+
                 // Simulate writing data to a database/storage
                 await Task.Delay(1000); // Simulate I/O operation
 
@@ -96,7 +122,7 @@ namespace be_wrk_writer
                 }
 
                 string newId = Guid.NewGuid().ToString(); // Simulate getting an ID after write
-                _logger.LogInformation($"be_wrk_writer: [V] Data '{command.DataToPersist}' simulated written with ID: {newId}");
+                _logger.LogInformation($"be_wrk_writer: [V] Data for {dataToPersist.Count} items simulated written with ID: {newId}");
 
                 response.IsSuccess = true;
                 response.PersistedItemId = newId;
