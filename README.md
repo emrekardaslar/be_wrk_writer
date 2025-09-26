@@ -40,6 +40,7 @@ Edit `appsettings.json` or `appsettings.Development.json` to set RabbitMQ connec
 
 - `be_wrk_orchestrator` - Orchestrator service
 - `be_wrk_feeder` - Feeder service
+- `be_wrk_fetcher` - Fetcher service
 - `core_lib_messaging` - Shared messaging library
 
 ---
